@@ -1,0 +1,19 @@
+timestamp,acc_num,type,amount,status,balance_after
+2026-03-02 13:03,1201,add,100.00,success,10100.00
+2026-03-02 13:03,1201,deduct,1000000.00,failed,10100.00
+2026-03-02 13:03,1201,deduct,100.00,success,10000.00
+2026-03-02 13:04,1200,transfer_out,1000.00,failed,3990723.00
+2026-03-02 13:05,1200,transfer_out,723.00,success,3990000.00
+2026-03-02 13:05,1201,transfer_in,723.00,success,10723.00
+2026-03-02 13:07,1201,transfer_in,50.00,success,10773.00
+2026-03-02 13:07,1199,transfer_in,50.00,success,1818001.00
+2026-03-02 13:07,1200,transfer_out_batch,50.00,success,3989900.00
+2026-03-02 13:09,1201,transfer_out,50.00,success,10773.00
+2026-03-02 13:09,1200,transfer_in_batch,0.00,done,3989950.00
+2026-03-02 13:12,1201,vault_add,100.00,success,10673.00
+2026-03-02 13:13,1201,vault_deduct,100.00,success,10673.00
+2026-03-02 13:13,1201,cc_payback_balance,12.00,success,10661.00
+2026-03-02 14:56,1300,vault_add,3000.00,success,1000.00
+2026-03-02 14:57,1300,vault_add,500.00,success,500.00
+2026-03-02 14:58,1300,cc_payback_cash,1000.00,success,500.00
+2026-03-02 14:58,1300,cc_payback_balance,500.00,success,0.00

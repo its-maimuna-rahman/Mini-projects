@@ -1,0 +1,16 @@
+timestamp,acc_num,action,details
+2026-03-02 12:54,1201,VAULT_CREATED,Vault V100 created on account creation
+2026-03-02 12:54,1201,ACCOUNT_ADDED,"Type=credit_card, Balance=10000.0"
+2026-03-02 12:54,1201,ACCOUNT_DELETED,Account removed
+2026-03-02 12:58,1201,VAULT_CREATED,Vault 1201 created on account creation
+2026-03-02 12:58,1201,ACCOUNT_ADDED,"Type=credit_card, Balance=10000.0"
+2026-03-02 13:44,1201,ACCOUNT_DELETED,Account removed
+2026-03-02 13:47,1201,VAULT_CREATED,Vault VAR created on account creation
+2026-03-02 13:47,1201,ACCOUNT_ADDED,"Type=credit_card, Balance=1000.0"
+2026-03-02 13:47,1201,ACCOUNT_DELETED,Account removed
+2026-03-02 13:49,1200,CONVERT_TYPE,"Changed to credit_card, CC=12345678"
+2026-03-02 13:49,1200,CONVERT_TYPE,"Changed to non_credit_card, credit card removed"
+2026-03-02 14:56,1300,VAULT_CREATED,Vault V100 created on account creation
+2026-03-02 14:56,1300,ACCOUNT_ADDED,"Type=credit_card, Balance=1000.0"
+2026-03-02 14:59,1300,VAULT_DESTROYED,"Vault V100 destroyed, funds=$3500.00 transferred"
+2026-03-02 15:00,1300,ACCOUNT_DELETED,Account removed
