@@ -2,7 +2,7 @@
 main.py — BankOS v2
 Single entry point: first-run setup → login screen → Admin portal / Customer portal.
 
-CSV paths (account_log, transaction_log, freeze_log) are collected once during
+CSV paths (account_log, transaction_log, pending_transfers) are collected once during
 first_run_setup() and then threaded through every portal and sub-function as a
 single `Logs` namedtuple so nothing is ever hardcoded.
 
@@ -70,9 +70,9 @@ FILTER_KEYS      = list(FILTER_WHERE.keys())
 
 class Logs(NamedTuple):
     """Holds the three log DB connections for the lifetime of the session."""
-    acc:    sqlite3.Connection
-    tx:     sqlite3.Connection
-    freeze: sqlite3.Connection
+    acc:     sqlite3.Connection
+    tx:      sqlite3.Connection
+    freeze:  sqlite3.Connection  # now points to pending_transfers DB
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -505,17 +505,17 @@ def _admin_show_accounts(conn) -> None:
 
 
 def _admin_logs(conn, logs: Logs) -> None:
-    """Option 4 — View account_log, transaction_log, or freeze_log."""
+    """Option 4 — View account_log, transaction_log, or pending_transfers."""
     _divider("View Logs")
     print("  [1] Account log")
     print("  [2] Transaction log")
-    print("  [3] Freeze log")
+    print("  [3] Pending transfers log")
     print("  [0] Back")
     sub = _safe_menu("  Choose: ", {"1","2","3","0"})
     if sub == "0":
         return
 
-    table     = {"1": "account_log", "2": "transaction_log", "3": "freeze_log"}[sub]
+    table     = {"1": "account_log", "2": "transaction_log", "3": "pending_transfers"}[sub]
     acc_raw   = _input("  Filter by account number (Enter for all): ")
     acc_num   = int(acc_raw) if acc_raw.isdigit() else None
     limit_raw = _input("  Max rows to show (Enter for 50): ")
@@ -550,7 +550,7 @@ def _admin_overview(conn) -> None:
 
 
 def _admin_freeze(conn, logs: Logs) -> None:
-    """Option 6 — Freeze or unfreeze an account. Writes to both account_log and freeze_log."""
+    """Option 6 — Freeze or unfreeze an account. Writes to account_log."""
     _divider("Freeze / Unfreeze Account")
     acc = _safe_positive_int("  Account number: ")
     row = conn.execute(

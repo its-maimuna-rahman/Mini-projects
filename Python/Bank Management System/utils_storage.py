@@ -3,7 +3,7 @@ utils_storage.py  —  BankOS v2
 SQLite + CSV persistence layer.
 
 first_run_setup() returns:
-    (conn, acc_log_conn, tx_log_conn, freeze_log_conn)
+    (conn, acc_log_conn, tx_log_conn, pending_transfer_conn)
 so main.py can pass the correct CSV paths to every logging call.
 
 All monetary amounts are in minor units (integer).
@@ -117,7 +117,7 @@ def init_storage(db_path: str) -> sqlite3.Connection:
 def first_run_setup() -> tuple[sqlite3.Connection, sqlite3.Connection, sqlite3.Connection, sqlite3.Connection]:
     """
     Interactive first-run wizard.
-    Returns (conn, acc_log_conn, tx_log_conn, freeze_log_conn).
+    Returns (conn, acc_log_conn, tx_log_conn, pending_transfer_conn).
 
     Flow (per README):
       [1] Import existing .db file
@@ -127,7 +127,7 @@ def first_run_setup() -> tuple[sqlite3.Connection, sqlite3.Connection, sqlite3.C
       → Optional CSV/XLSX import into DB tables
       → account_log DB setup   (same [1]/[2]/[3] flow as main DB)
       → transaction_log DB setup  (same flow)
-      → freeze_log DB setup       (same flow)
+      → pending_transfers DB setup  (same flow)
     """
     print("\n=============== BANK MANAGEMENT SYSTEM ===============")
     print("\n=== First-Run Setup ===")
@@ -192,10 +192,10 @@ def first_run_setup() -> tuple[sqlite3.Connection, sqlite3.Connection, sqlite3.C
         table="transaction_log",
     )
     freeze_log_conn = _setup_log_db_menu(
-        log_label="Freeze log",
-        default="freeze_log.db",
-        schema=LOG_SCHEMAS["freeze_log"],
-        table="freeze_log",
+        log_label="Pending transfers",
+        default="pending_transfers.db",
+        schema=LOG_SCHEMAS["pending_transfers"],
+        table="pending_transfers",
     )
 
     return conn, acc_log_conn, tx_log_conn, freeze_log_conn
@@ -222,12 +222,16 @@ LOG_SCHEMAS: dict[str, str] = {
         status        TEXT    NOT NULL,
         balance_after INTEGER NOT NULL
     )""",
-    "freeze_log": """CREATE TABLE IF NOT EXISTS freeze_log (
-        id        INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp TEXT    NOT NULL,
-        acc_num   INTEGER NOT NULL,
-        action    TEXT    NOT NULL,
-        details   TEXT    NOT NULL
+    "pending_transfers": """CREATE TABLE IF NOT EXISTS pending_transfers (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp        TEXT    NOT NULL,
+        sender_acc_num   INTEGER NOT NULL,
+        receiver_acc_num TEXT    NOT NULL,
+        amount           INTEGER NOT NULL,
+        currency         TEXT    NOT NULL,
+        via_credit       INTEGER NOT NULL DEFAULT 0,
+        status           TEXT    NOT NULL DEFAULT 'pending',
+        reviewed_at      TEXT
     )""",
 }
 
@@ -324,7 +328,7 @@ def _run_file_import_wizard(conn: sqlite3.Connection, restrict_table: str | None
       Duplicates / invalid rows are skipped with a warning.
     """
     IMPORTABLE = ["accounts", "account_log", "transaction_log",
-                  "pending_transfers", "freeze_log"]
+                  "pending_transfers"]
 
     # How many files?
     while True:
@@ -478,10 +482,10 @@ def log_freeze_action(
     action: str,
     details: str,
 ) -> None:
-    """Write to the freeze_log DB."""
+    """Write freeze action to the account_log (freeze_log removed; use account_log instead)."""
     ts = now_display()
     log_conn.execute(
-        "INSERT INTO freeze_log(timestamp, acc_num, action, details) VALUES (?,?,?,?)",
+        "INSERT INTO account_log(timestamp, acc_num, action, details) VALUES (?,?,?,?)",
         (ts, acc_num, action, details),
     )
     log_conn.commit()
@@ -1315,9 +1319,9 @@ def get_logs(
     tx_log_conn: sqlite3.Connection | None = None,
     freeze_log_conn: sqlite3.Connection | None = None,
 ) -> list[sqlite3.Row]:
-    """Retrieve rows from account_log, transaction_log, or freeze_log.
+    """Retrieve rows from account_log, transaction_log, or pending_transfers.
     Uses the dedicated log DB connection if provided, else falls back to main conn."""
-    if table not in {"account_log", "transaction_log", "freeze_log"}:
+    if table not in {"account_log", "transaction_log", "pending_transfers"}:
         return []
     # Route to the appropriate log DB
     if table == "account_log":
@@ -1515,11 +1519,6 @@ def _insert_row(conn: sqlite3.Connection, table: str, row: dict) -> None:
                 row.get("status", "pending"),
                 row.get("reviewed_at") or None,
             ),
-        )
-    elif table == "freeze_log":
-        conn.execute(
-            "INSERT INTO freeze_log(timestamp, acc_num, action, details) VALUES (?,?,?,?)",
-            (row["timestamp"], int(row["acc_num"]), row["action"], row["details"]),
         )
     else:
         raise ValueError(f"Unsupported import table: '{table}'")
