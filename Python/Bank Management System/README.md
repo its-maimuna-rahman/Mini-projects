@@ -1,4 +1,4 @@
-# 🏦 BankOS v2 — Bank Management System
+# 🏦 BankOS — Bank Management System
 
 A Python console application for managing bank accounts, credit cards, vaults, and transactions. Upgraded from basic CSV to **SQLite + CSV logs + on-demand XLSX export**, with multi-currency (BDT/USD), split Admin/Customer portals, SHA-256 password hashing, login lockout, daily transfer limits, spending categories, PDF statements, and a pending-transfer approval workflow.
 
