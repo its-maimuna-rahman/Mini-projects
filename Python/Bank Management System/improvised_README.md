@@ -100,12 +100,60 @@ SAME PROCESS WILL REPEAT FOR `account_log` `transaction_log` AND `freezing_accou
 ```
 ** n.b. : db files will not sync with csv and xlsx, all edits will be shown in db, it is not changeable outside if the program.
 
-This setup runs only once. After that: SQLite = primary storage, CSV = live log mirror (if sync enabled), XLSX = on-demand export only.
 
 > This is asked **once only** on first run. After setup, storage behaviour is fixed: SQLite for all databases , CSV for csv files, XLSX report on-demand.
 
 ```
 so basically you input a db or start a fresh db (automatically created), then if you have existing data in csv/xlsx, you import those files and enter all the data into the db
+```
+
+```
+=== BANK MANAGEMENT SYSTEM ===
+ [1] Import existing database
+ [2] Start fresh database 
+[3] Exit 
+
+Import CSV/XLSX files into DB? [yes/no]: 
+
+--- Log Table Setup --- 
+Account log setup:
+ [1] Import existing database 
+ [2] Start fresh (no import)
+ [3] Exit
+
+Import CSV/XLSX files into DB? [yes/no]:
+
+ 
+Transaction log setup:
+ [1] Import existing database 
+ [2] Start fresh (no import)
+ [3] Exit
+
+Import CSV/XLSX files into DB? [yes/no]:
+
+Account Freeze data setup:
+ [1] Import existing database 
+ [2] Start fresh (no import)
+ [3] Exit
+
+Import CSV/XLSX files into DB? [yes/no]:
+
+
+every time "Import CSV/XLSX files into DB? [yes/no]:" is yes then 
+# above part as many times as many files to import and will take valid imput for file type
+How many files to import? :
+File format:    
+    [1] CSV  (.csv)
+    [2] XLSX (.xlsx)
+    Choose [1/2]: 
+
+# if csv file
+Enter .csv file name :
+# if xlsx file
+Enter .xlsx file name:
+
+# then the csv or xlsx or both type files' data will be input in the databases according to their respective databases.
+
 ```
 
 ### Login Screen
