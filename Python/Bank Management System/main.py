@@ -12,6 +12,7 @@ Customer menu: 8 options
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from typing import NamedTuple
 
@@ -68,10 +69,10 @@ FILTER_KEYS      = list(FILTER_WHERE.keys())
 # ── log-path bundle ───────────────────────────────────────────────────────────
 
 class Logs(NamedTuple):
-    """Holds the three CSV paths for the lifetime of the session."""
-    acc:    str
-    tx:     str
-    freeze: str
+    """Holds the three log DB connections for the lifetime of the session."""
+    acc:    sqlite3.Connection
+    tx:     sqlite3.Connection
+    freeze: sqlite3.Connection
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -236,8 +237,8 @@ def _ensure_csv(path: str, header: list) -> None:
 
 def _start_session():
     """Always runs first_run_setup() on every program start."""
-    conn, acc_csv, tx_csv, freeze_csv = first_run_setup()
-    return conn, Logs(acc=acc_csv, tx=tx_csv, freeze=freeze_csv)
+    conn, acc_log_conn, tx_log_conn, freeze_log_conn = first_run_setup()
+    return conn, Logs(acc=acc_log_conn, tx=tx_log_conn, freeze=freeze_log_conn)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -265,11 +266,11 @@ def admin_portal(conn, logs: Logs) -> None:
         if   ch == "1": _admin_account_crud(conn, logs)
         elif ch == "2": _admin_vault_crud(conn, logs)
         elif ch == "3": _admin_show_accounts(conn)
-        elif ch == "4": _admin_logs(conn)
+        elif ch == "4": _admin_logs(conn, logs)
         elif ch == "5": _admin_overview(conn)
         elif ch == "6": _admin_freeze(conn, logs)
         elif ch == "7": _admin_pending(conn, logs)
-        elif ch == "8": _admin_pdf(conn)
+        elif ch == "8": _admin_pdf(conn, logs)
         elif ch == "9": _admin_export(conn)
         elif ch == "0":
             print("  Logged out.")
@@ -503,7 +504,7 @@ def _admin_show_accounts(conn) -> None:
     _divider()
 
 
-def _admin_logs(conn) -> None:
+def _admin_logs(conn, logs: Logs) -> None:
     """Option 4 — View account_log, transaction_log, or freeze_log."""
     _divider("View Logs")
     print("  [1] Account log")
@@ -520,7 +521,8 @@ def _admin_logs(conn) -> None:
     limit_raw = _input("  Max rows to show (Enter for 50): ")
     limit     = int(limit_raw) if limit_raw.isdigit() else 50
 
-    rows = get_logs(conn, table, acc_num, limit)
+    rows = get_logs(conn, table, acc_num, limit,
+                    acc_log_conn=logs.acc, tx_log_conn=logs.tx, freeze_log_conn=logs.freeze)
     if not rows:
         print("  No log entries found.")
         return
@@ -589,14 +591,14 @@ def _admin_pending(conn, logs: Logs) -> None:
     print(f"  {review_pending(conn, logs.tx, pid, approve)}")
 
 
-def _admin_pdf(conn) -> None:
+def _admin_pdf(conn, logs: Logs) -> None:
     """Option 8 — Generate PDF statement for any account."""
     _divider("Generate PDF Statement")
     acc = _safe_positive_int("  Account number: ")
     if not conn.execute("SELECT acc_num FROM accounts WHERE acc_num=?", (acc,)).fetchone():
         print("  [!] Account not found.")
         return
-    print(f"  {generate_pdf_statement(conn, acc)}")
+    print(f"  {generate_pdf_statement(conn, acc, tx_log_conn=logs.tx)}")
 
 
 def _admin_export(conn) -> None:
@@ -658,8 +660,8 @@ def customer_portal(conn, acc_num: int, logs: Logs) -> None:
         elif ch == "3": _cust_transfer(conn, acc_num, logs)
         elif ch == "4": _cust_vault(conn, acc_num, logs)
         elif ch == "5": _cust_payback(conn, acc_num, logs)
-        elif ch == "6": _cust_transactions(conn, acc_num)
-        elif ch == "7": _cust_pdf(conn, acc_num)
+        elif ch == "6": _cust_transactions(conn, acc_num, logs)
+        elif ch == "7": _cust_pdf(conn, acc_num, logs)
         elif ch == "8":
             print("  Logged out.")
             return
@@ -751,7 +753,7 @@ def _cust_transfer(conn, acc_num: int, logs: Logs) -> None:
         return
 
     native_currency = row["currency"]
-    spent_today     = get_outbound_today(conn, acc_num)
+    spent_today     = get_outbound_today(conn, acc_num, logs.tx)
     limit           = row["daily_transfer_limit"]
     remaining_limit = max(0, limit - spent_today)
     print(
@@ -898,10 +900,10 @@ def _cust_payback(conn, acc_num: int, logs: Logs) -> None:
     print(f"  {payback_credit(conn, logs.tx, acc_num, amount, from_balance=(sub == '1'), cc_pin=cc_pin)}")
 
 
-def _cust_transactions(conn, acc_num: int) -> None:
+def _cust_transactions(conn, acc_num: int, logs: Logs) -> None:
     """Option 6 — Last 10 transactions."""
     _divider("Last 10 Transactions")
-    rows = recent_transactions(conn, acc_num, 10)
+    rows = recent_transactions(conn, acc_num, 10, tx_log_conn=logs.tx)
     if not rows:
         print("  No transactions yet.")
         return
@@ -910,10 +912,10 @@ def _cust_transactions(conn, acc_num: int) -> None:
     _divider()
 
 
-def _cust_pdf(conn, acc_num: int) -> None:
+def _cust_pdf(conn, acc_num: int, logs: Logs) -> None:
     """Option 7 — Generate PDF statement."""
     _divider("Generate PDF Statement")
-    print(f"  {generate_pdf_statement(conn, acc_num)}")
+    print(f"  {generate_pdf_statement(conn, acc_num, tx_log_conn=logs.tx)}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -950,6 +952,9 @@ def main() -> None:
 
         if ch == "3":
             conn.close()
+            logs.acc.close()
+            logs.tx.close()
+            logs.freeze.close()
             print("  Goodbye.")
             return
         elif ch == "1":

@@ -3,7 +3,7 @@ utils_storage.py  —  BankOS v2
 SQLite + CSV persistence layer.
 
 first_run_setup() returns:
-    (conn, account_log_csv, tx_log_csv, freeze_log_csv)
+    (conn, acc_log_conn, tx_log_conn, freeze_log_conn)
 so main.py can pass the correct CSV paths to every logging call.
 
 All monetary amounts are in minor units (integer).
@@ -80,24 +80,6 @@ SCHEMA: list[str] = [
         failed_login_attempts       INTEGER DEFAULT 0,
         locked_until                TEXT
     )""",
-    """CREATE TABLE IF NOT EXISTS account_log (
-        id        INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp TEXT    NOT NULL,
-        acc_num   INTEGER,
-        action    TEXT    NOT NULL,
-        details   TEXT    NOT NULL
-    )""",
-    """CREATE TABLE IF NOT EXISTS transaction_log (
-        id            INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp     TEXT    NOT NULL,
-        acc_num       INTEGER NOT NULL,
-        type          TEXT    NOT NULL,
-        amount        INTEGER NOT NULL,
-        currency      TEXT    NOT NULL,
-        category      TEXT    NOT NULL DEFAULT 'other',
-        status        TEXT    NOT NULL,
-        balance_after INTEGER NOT NULL
-    )""",
     """CREATE TABLE IF NOT EXISTS pending_transfers (
         id               INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp        TEXT    NOT NULL,
@@ -108,13 +90,6 @@ SCHEMA: list[str] = [
         via_credit       INTEGER NOT NULL DEFAULT 0,
         status           TEXT    NOT NULL DEFAULT 'pending',
         reviewed_at      TEXT
-    )""",
-    """CREATE TABLE IF NOT EXISTS freeze_log (
-        id        INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp TEXT    NOT NULL,
-        acc_num   INTEGER NOT NULL,
-        action    TEXT    NOT NULL,
-        details   TEXT    NOT NULL
     )""",
 ]
 
@@ -139,10 +114,10 @@ def init_storage(db_path: str) -> sqlite3.Connection:
 #  First-run setup wizard
 # =============================================================================
 
-def first_run_setup() -> tuple[sqlite3.Connection, str, str, str]:
+def first_run_setup() -> tuple[sqlite3.Connection, sqlite3.Connection, sqlite3.Connection, sqlite3.Connection]:
     """
     Interactive first-run wizard.
-    Returns (conn, account_log_csv, transaction_log_csv, freeze_log_csv).
+    Returns (conn, acc_log_conn, tx_log_conn, freeze_log_conn).
 
     Flow (per README):
       [1] Import existing .db file
@@ -150,9 +125,9 @@ def first_run_setup() -> tuple[sqlite3.Connection, str, str, str]:
       [3] Exit
 
       → Optional CSV/XLSX import into DB tables
-      → account_log setup  (menu: [1] use default  [2] enter custom name)
-      → transaction_log setup  (same menu)
-      → freeze_log setup  (same menu)
+      → account_log DB setup   (same [1]/[2]/[3] flow as main DB)
+      → transaction_log DB setup  (same flow)
+      → freeze_log DB setup       (same flow)
     """
     print("\n=============== BANK MANAGEMENT SYSTEM ===============")
     print("\n=== First-Run Setup ===")
@@ -202,60 +177,96 @@ def first_run_setup() -> tuple[sqlite3.Connection, str, str, str]:
             break
         print("  [!] Enter yes or no.")
 
-    # ── Log file setup — each log shows its own menu ──────────────────────────
-    print("\n--- Log File Setup ---")
-    acc_log    = _setup_log_file_menu(
+    # ── Log DB setup — each log gets its own .db, same flow as main DB ───────
+    print("\n--- Log Database Setup ---")
+    acc_log_conn    = _setup_log_db_menu(
         log_label="Account log",
-        default="account_log.csv",
-        header=["timestamp", "acc_num", "action", "details"],
+        default="account_log.db",
+        schema=LOG_SCHEMAS["account_log"],
         table="account_log",
-        conn=conn,
     )
-    tx_log     = _setup_log_file_menu(
+    tx_log_conn     = _setup_log_db_menu(
         log_label="Transaction log",
-        default="transaction_log.csv",
-        header=["timestamp", "acc_num", "type", "amount", "currency",
-                "category", "status", "balance_after"],
+        default="transaction_log.db",
+        schema=LOG_SCHEMAS["transaction_log"],
         table="transaction_log",
-        conn=conn,
     )
-    freeze_log = _setup_log_file_menu(
+    freeze_log_conn = _setup_log_db_menu(
         log_label="Freeze log",
-        default="freeze_log.csv",
-        header=["timestamp", "acc_num", "action", "details"],
+        default="freeze_log.db",
+        schema=LOG_SCHEMAS["freeze_log"],
         table="freeze_log",
-        conn=conn,
     )
 
-    return conn, acc_log, tx_log, freeze_log
+    return conn, acc_log_conn, tx_log_conn, freeze_log_conn
 
 
-def _setup_log_file_menu(
+# ── Per-log DB schemas ────────────────────────────────────────────────────────
+
+LOG_SCHEMAS: dict[str, str] = {
+    "account_log": """CREATE TABLE IF NOT EXISTS account_log (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT    NOT NULL,
+        acc_num   INTEGER,
+        action    TEXT    NOT NULL,
+        details   TEXT    NOT NULL
+    )""",
+    "transaction_log": """CREATE TABLE IF NOT EXISTS transaction_log (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp     TEXT    NOT NULL,
+        acc_num       INTEGER NOT NULL,
+        type          TEXT    NOT NULL,
+        amount        INTEGER NOT NULL,
+        currency      TEXT    NOT NULL,
+        category      TEXT    NOT NULL DEFAULT 'other',
+        status        TEXT    NOT NULL,
+        balance_after INTEGER NOT NULL
+    )""",
+    "freeze_log": """CREATE TABLE IF NOT EXISTS freeze_log (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT    NOT NULL,
+        acc_num   INTEGER NOT NULL,
+        action    TEXT    NOT NULL,
+        details   TEXT    NOT NULL
+    )""",
+}
+
+
+def _init_log_db(db_path: str, schema_sql: str) -> sqlite3.Connection:
+    """Open/create a single-table log DB, apply schema, return connection."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute(schema_sql)
+    conn.commit()
+    return conn
+
+
+def _setup_log_db_menu(
     log_label: str,
     default: str,
-    header: list[str],
+    schema: str,
     table: str,
-    conn,
-) -> str:
+) -> sqlite3.Connection:
     """
-    Identical flow to the main DB setup, but for a single CSV log file.
+    Identical flow to the main DB setup, applied to a single log DB.
 
-      [1] Import existing .csv file
-            → loop asking filename until the file exists on disk (same as DB import)
-      [2] Start fresh .csv file
-            → ask for name (Enter = use default), create it with headers
+      [1] Import existing .db file
+            → loop asking filename until the file exists on disk
+      [2] Start fresh .db file
+            → ask for name (Enter = use default), create it with schema
       [3] Exit
             → exits the whole program
 
-    After the file is set up, asks:
+    After the DB is set up, asks:
       "Import CSV/XLSX data into this log? [yes/no]"
       If yes → runs _run_file_import_wizard scoped to this log's table.
 
-    Returns the resolved filename.
+    Returns an open sqlite3.Connection for the log DB.
     """
     print(f"\n  {log_label} setup:")
-    print(f"    [1] Import existing {log_label.lower()} file")
-    print(f"    [2] Start fresh {log_label.lower()} file")
+    print(f"    [1] Import existing {log_label.lower()} database")
+    print(f"    [2] Start fresh {log_label.lower()} database")
     print(f"    [3] Exit")
 
     while True:
@@ -268,40 +279,38 @@ def _setup_log_file_menu(
         raise SystemExit(0)
 
     if sub == "1":
-        # Must supply a file that actually exists — identical to DB import loop
+        # Must supply a file that actually exists — identical to main DB import loop
         while True:
-            name = input(f"    Enter .csv filename to import: ").strip()
-            if not name:
+            db_name = input(f"    Enter .db filename to import: ").strip()
+            if not db_name:
                 print("    [!] Filename cannot be empty.")
                 continue
-            if not name.endswith(".csv"):
-                name += ".csv"
-            if not Path(name).exists():
-                print(f"    [!] File '{name}' not found. Try again.")
+            if not db_name.endswith(".db"):
+                db_name += ".db"
+            if not Path(db_name).exists():
+                print(f"    [!] File '{db_name}' not found. Try again.")
                 continue
             break
-        print(f"    [OK] Opened existing {log_label.lower()} file: {name}")
-
+        log_conn = _init_log_db(db_name, schema)
+        print(f"    [OK] Opened existing {log_label.lower()} database: {db_name}")
     else:  # sub == "2"
-        name = input(f"    New filename (Enter for '{default}'): ").strip() or default
-        if not name.endswith(".csv"):
-            name += ".csv"
-        path = Path(name)
-        with path.open("w", newline="", encoding="utf-8") as f:
-            csv.writer(f).writerow(header)
-        print(f"    [OK] Created fresh {log_label.lower()} file: {name}")
+        db_name = input(f"    New database name (Enter for '{default}'): ").strip() or default
+        if not db_name.endswith(".db"):
+            db_name += ".db"
+        log_conn = _init_log_db(db_name, schema)
+        print(f"    [OK] Created fresh {log_label.lower()} database: {db_name}")
 
-    # ── Optional CSV/XLSX import into this log ────────────────────────────────
+    # ── Optional CSV/XLSX import into this log DB ─────────────────────────────
     while True:
         ans = input(f"    Import CSV/XLSX data into {log_label.lower()}? [yes/no]: ").strip().lower()
         if ans in ("yes", "y"):
-            _run_file_import_wizard(conn, restrict_table=table)
+            _run_file_import_wizard(log_conn, restrict_table=table)
             break
         if ans in ("no", "n"):
             break
         print("    [!] Enter yes or no.")
 
-    return name
+    return log_conn
 
 
 def _run_file_import_wizard(conn: sqlite3.Connection, restrict_table: str | None = None) -> None:
@@ -421,45 +430,28 @@ def _run_file_import_wizard(conn: sqlite3.Connection, restrict_table: str | None
 
 
 # =============================================================================
-#  CSV append helper
-# =============================================================================
-
-def _append_csv(path: str, header: list[str], row: list) -> None:
-    """Append one row to a CSV, writing the header if the file is new/empty."""
-    p = Path(path)
-    write_header = not p.exists() or p.stat().st_size == 0
-    with p.open("a", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        if write_header:
-            w.writerow(header)
-        w.writerow(row)
-
-
-# =============================================================================
 #  Logging
 # =============================================================================
 
 def log_account_action(
     conn: sqlite3.Connection,
-    csv_path: str,
+    log_conn: sqlite3.Connection,
     acc_num: int,
     action: str,
     details: str,
 ) -> None:
-    """Write to account_log table AND account_log.csv."""
+    """Write to the account_log DB."""
     ts = now_display()
-    conn.execute(
+    log_conn.execute(
         "INSERT INTO account_log(timestamp, acc_num, action, details) VALUES (?,?,?,?)",
         (ts, acc_num, action, details),
     )
-    conn.commit()
-    _append_csv(csv_path, ["timestamp", "acc_num", "action", "details"],
-                [ts, acc_num, action, details])
+    log_conn.commit()
 
 
 def log_transaction(
     conn: sqlite3.Connection,
-    csv_path: str,
+    log_conn: sqlite3.Connection,
     acc_num: int,
     tx_type: str,
     amount: int,
@@ -468,39 +460,31 @@ def log_transaction(
     status: str,
     balance_after: int,
 ) -> None:
-    """Write to transaction_log table AND transaction_log.csv."""
+    """Write to the transaction_log DB."""
     ts = now_display()
-    conn.execute(
+    log_conn.execute(
         """INSERT INTO transaction_log
            (timestamp, acc_num, type, amount, currency, category, status, balance_after)
            VALUES (?,?,?,?,?,?,?,?)""",
         (ts, acc_num, tx_type, amount, currency, category, status, balance_after),
     )
-    conn.commit()
-    _append_csv(
-        csv_path,
-        ["timestamp", "acc_num", "type", "amount", "currency",
-         "category", "status", "balance_after"],
-        [ts, acc_num, tx_type, amount, currency, category, status, balance_after],
-    )
+    log_conn.commit()
 
 
 def log_freeze_action(
     conn: sqlite3.Connection,
-    csv_path: str,
+    log_conn: sqlite3.Connection,
     acc_num: int,
     action: str,
     details: str,
 ) -> None:
-    """Write to freeze_log table AND freeze_log.csv."""
+    """Write to the freeze_log DB."""
     ts = now_display()
-    conn.execute(
+    log_conn.execute(
         "INSERT INTO freeze_log(timestamp, acc_num, action, details) VALUES (?,?,?,?)",
         (ts, acc_num, action, details),
     )
-    conn.commit()
-    _append_csv(csv_path, ["timestamp", "acc_num", "action", "details"],
-                [ts, acc_num, action, details])
+    log_conn.commit()
 
 
 # =============================================================================
@@ -564,10 +548,12 @@ def authenticate_customer(
 #  Daily transfer limit
 # =============================================================================
 
-def get_outbound_today(conn: sqlite3.Connection, acc_num: int) -> int:
-    """Sum of successful transfer_out amounts for acc_num today (minor units)."""
+def get_outbound_today(conn: sqlite3.Connection, acc_num: int, tx_log_conn: sqlite3.Connection | None = None) -> int:
+    """Sum of successful transfer_out amounts for acc_num today (minor units).
+    Queries tx_log_conn (transaction log DB) if provided, else falls back to main conn."""
+    db = tx_log_conn if tx_log_conn is not None else conn
     today = datetime.now().strftime("%Y-%m-%d")
-    row = conn.execute(
+    row = db.execute(
         """SELECT COALESCE(SUM(amount), 0) AS s FROM transaction_log
            WHERE acc_num=? AND type='transfer_out'
              AND substr(timestamp,1,10)=? AND status='success'""",
@@ -582,7 +568,7 @@ def get_outbound_today(conn: sqlite3.Connection, acc_num: int) -> int:
 
 def add_funds(
     conn: sqlite3.Connection,
-    tx_csv: str,
+    tx_log_conn: sqlite3.Connection,
     acc_num: int,
     amount_minor: int,
     category: str = "other",
@@ -603,7 +589,7 @@ def add_funds(
     new_bal = conn.execute(
         "SELECT acc_balance FROM accounts WHERE acc_num=?", (acc_num,)
     ).fetchone()["acc_balance"]
-    log_transaction(conn, tx_csv, acc_num, "add", amount_minor,
+    log_transaction(conn, tx_log_conn, acc_num, "add", amount_minor,
                     row["currency"], category, "success", new_bal)
     return (f"Deposited {format_money(amount_minor, row['currency'])}. "
             f"New balance: {format_money(new_bal, row['currency'])}.")
@@ -611,7 +597,7 @@ def add_funds(
 
 def deduct_funds(
     conn: sqlite3.Connection,
-    tx_csv: str,
+    tx_log_conn: sqlite3.Connection,
     acc_num: int,
     amount_minor: int,
     category: str = "other",
@@ -625,7 +611,7 @@ def deduct_funds(
     if row["is_frozen"]:
         return "Account is frozen."
     if row["acc_balance"] < amount_minor:
-        log_transaction(conn, tx_csv, acc_num, "deduct", amount_minor,
+        log_transaction(conn, tx_log_conn, acc_num, "deduct", amount_minor,
                         row["currency"], category, "failed", row["acc_balance"])
         return "Insufficient balance."
     conn.execute(
@@ -636,7 +622,7 @@ def deduct_funds(
     new_bal = conn.execute(
         "SELECT acc_balance FROM accounts WHERE acc_num=?", (acc_num,)
     ).fetchone()["acc_balance"]
-    log_transaction(conn, tx_csv, acc_num, "deduct", amount_minor,
+    log_transaction(conn, tx_log_conn, acc_num, "deduct", amount_minor,
                     row["currency"], category, "success", new_bal)
     warning = (f" [WARNING] Low balance: {format_money(new_bal, row['currency'])}."
                if new_bal <= 50_000 else "")
@@ -649,7 +635,7 @@ def deduct_funds(
 
 def _execute_transfer(
     conn: sqlite3.Connection,
-    tx_csv: str,
+    tx_log_conn: sqlite3.Connection,
     sender_num: int,
     receiver_num: int,
     amount_minor: int,
@@ -684,7 +670,7 @@ def _execute_transfer(
 
     # ── daily limit check (skip for admin-approved) ───────────────────────────
     if not admin_bypass:
-        spent_today = get_outbound_today(conn, sender_num)
+        spent_today = get_outbound_today(conn, sender_num, tx_log_conn)
         if spent_today + amount_minor > s["daily_transfer_limit"]:
             remaining = max(0, s["daily_transfer_limit"] - spent_today)
             return (f"Daily limit exceeded. "
@@ -704,7 +690,7 @@ def _execute_transfer(
              amount_minor, s["currency"], int(via_credit)),
         )
         conn.commit()
-        log_transaction(conn, tx_csv, sender_num, "transfer_out", amount_minor,
+        log_transaction(conn, tx_log_conn, sender_num, "transfer_out", amount_minor,
                         s["currency"], category, "pending", s["acc_balance"])
         return (f"Transfer of {format_money(amount_minor, s['currency'])} exceeds "
                 f"threshold. Queued for admin approval.")
@@ -741,9 +727,9 @@ def _execute_transfer(
         "SELECT acc_balance FROM accounts WHERE acc_num=?", (receiver_num,)
     ).fetchone()["acc_balance"]
 
-    log_transaction(conn, tx_csv, sender_num, "transfer_out", amount_minor,
+    log_transaction(conn, tx_log_conn, sender_num, "transfer_out", amount_minor,
                     s["currency"], category, "success", sender_bal_after)
-    log_transaction(conn, tx_csv, receiver_num, "transfer_in", recv_amount,
+    log_transaction(conn, tx_log_conn, receiver_num, "transfer_in", recv_amount,
                     r["currency"], category, "success", receiver_bal_after)
 
     msg = f"Transfer successful. {format_money(amount_minor, s['currency'])} sent."
@@ -754,7 +740,7 @@ def _execute_transfer(
 
 def transfer(
     conn: sqlite3.Connection,
-    tx_csv: str,
+    tx_log_conn: sqlite3.Connection,
     sender_num: int,
     receiver_num: int,
     amount_minor: int,
@@ -762,13 +748,13 @@ def transfer(
     via_credit: bool = False,
 ) -> str:
     """Public 1-to-1 transfer with daily limit + pending threshold."""
-    return _execute_transfer(conn, tx_csv, sender_num, receiver_num,
+    return _execute_transfer(conn, tx_log_conn, sender_num, receiver_num,
                              amount_minor, category, via_credit)
 
 
 def transfer_1tomany(
     conn: sqlite3.Connection,
-    tx_csv: str,
+    tx_log_conn: sqlite3.Connection,
     sender_num: int,
     receiver_nums: list[int],
     amount_minor: int,
@@ -778,14 +764,14 @@ def transfer_1tomany(
     """Transfer amount_minor from one sender to each receiver. Returns one result string per receiver."""
     return [
         f"→ Acc {rec}: "
-        f"{_execute_transfer(conn, tx_csv, sender_num, rec, amount_minor, category, via_credit)}"
+        f"{_execute_transfer(conn, tx_log_conn, sender_num, rec, amount_minor, category, via_credit)}"
         for rec in receiver_nums
     ]
 
 
 def transfer_manyto1(
     conn: sqlite3.Connection,
-    tx_csv: str,
+    tx_log_conn: sqlite3.Connection,
     sender_nums: list[int],
     receiver_num: int,
     amount_minor: int,
@@ -794,7 +780,7 @@ def transfer_manyto1(
 ) -> list[str]:
     """Transfer amount_minor from each sender to one receiver."""
     return [
-        f"→ Acc {sen}: {_execute_transfer(conn, tx_csv, sen, receiver_num, amount_minor, category, via_credit)}"
+        f"→ Acc {sen}: {_execute_transfer(conn, tx_log_conn, sen, receiver_num, amount_minor, category, via_credit)}"
         for sen in sender_nums
     ]
 
@@ -812,7 +798,7 @@ def get_pending_transfers(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 def review_pending(
     conn: sqlite3.Connection,
-    tx_csv: str,
+    tx_log_conn: sqlite3.Connection,
     transfer_id: int,
     approve: bool,
 ) -> str:
@@ -853,7 +839,7 @@ def review_pending(
 
     # ── approve: bypass threshold + daily-limit using _APPROVE_BYPASS ─────────
     res = _execute_transfer(
-        conn, tx_csv,
+        conn, tx_log_conn,
         int(row["sender_acc_num"]),
         int(row["receiver_acc_num"]),
         int(row["amount"]),
@@ -876,7 +862,7 @@ def review_pending(
 
 def vault_add(
     conn: sqlite3.Connection,
-    tx_csv: str,
+    tx_log_conn: sqlite3.Connection,
     acc_num: int,
     amount_minor: int,
     vault_password: str,
@@ -917,14 +903,14 @@ def vault_add(
     new_bal = conn.execute(
         "SELECT acc_balance FROM accounts WHERE acc_num=?", (acc_num,)
     ).fetchone()["acc_balance"]
-    log_transaction(conn, tx_csv, acc_num, "vault_add", amount_minor,
+    log_transaction(conn, tx_log_conn, acc_num, "vault_add", amount_minor,
                     row["currency"], "other", "success", new_bal)
     return f"Vault deposit: {format_money(amount_minor, row['currency'])}."
 
 
 def vault_deduct(
     conn: sqlite3.Connection,
-    tx_csv: str,
+    tx_log_conn: sqlite3.Connection,
     acc_num: int,
     amount_minor: int,
     vault_password: str,
@@ -957,7 +943,7 @@ def vault_deduct(
         new_bal = conn.execute(
             "SELECT acc_balance FROM accounts WHERE acc_num=?", (acc_num,)
         ).fetchone()["acc_balance"]
-        log_transaction(conn, tx_csv, acc_num, "vault_deduct", paid,
+        log_transaction(conn, tx_log_conn, acc_num, "vault_deduct", paid,
                         row["currency"], "other", "success", new_bal)
         return f"Vault → credit payback: {format_money(paid, row['currency'])}."
 
@@ -970,7 +956,7 @@ def vault_deduct(
     new_bal = conn.execute(
         "SELECT acc_balance FROM accounts WHERE acc_num=?", (acc_num,)
     ).fetchone()["acc_balance"]
-    log_transaction(conn, tx_csv, acc_num, "vault_deduct", amount_minor,
+    log_transaction(conn, tx_log_conn, acc_num, "vault_deduct", amount_minor,
                     row["currency"], "other", "success", new_bal)
     return f"Vault → balance: {format_money(amount_minor, row['currency'])}."
 
@@ -981,7 +967,7 @@ def vault_deduct(
 
 def payback_credit(
     conn: sqlite3.Connection,
-    tx_csv: str,
+    tx_log_conn: sqlite3.Connection,
     acc_num: int,
     amount_minor: int,
     from_balance: bool,
@@ -1025,7 +1011,7 @@ def payback_credit(
     new_bal = conn.execute(
         "SELECT acc_balance FROM accounts WHERE acc_num=?", (acc_num,)
     ).fetchone()["acc_balance"]
-    log_transaction(conn, tx_csv, acc_num, tx_type, pay,
+    log_transaction(conn, tx_log_conn, acc_num, tx_type, pay,
                     row["currency"], "other", "success", new_bal)
     return f"Credit payback of {format_money(pay, row['currency'])} successful."
 
@@ -1173,7 +1159,7 @@ def create_vault(
 
 def destroy_vault(
     conn: sqlite3.Connection,
-    tx_csv: str,
+    tx_log_conn: sqlite3.Connection,
     acc_num: int,
     vault_password: str,
     transfer_to_balance: bool = True,
@@ -1202,7 +1188,7 @@ def destroy_vault(
         new_bal = conn.execute(
             "SELECT acc_balance FROM accounts WHERE acc_num=?", (acc_num,)
         ).fetchone()["acc_balance"]
-        log_transaction(conn, tx_csv, acc_num, "vault_deduct", vault_balance,
+        log_transaction(conn, tx_log_conn, acc_num, "vault_deduct", vault_balance,
                         row["currency"], "other", "success", new_bal)
     else:
         conn.execute(
@@ -1325,15 +1311,26 @@ def get_logs(
     table: str,
     acc_num: int | None = None,
     limit: int = 50,
+    acc_log_conn: sqlite3.Connection | None = None,
+    tx_log_conn: sqlite3.Connection | None = None,
+    freeze_log_conn: sqlite3.Connection | None = None,
 ) -> list[sqlite3.Row]:
-    """Retrieve rows from account_log, transaction_log, or freeze_log."""
+    """Retrieve rows from account_log, transaction_log, or freeze_log.
+    Uses the dedicated log DB connection if provided, else falls back to main conn."""
     if table not in {"account_log", "transaction_log", "freeze_log"}:
         return []
+    # Route to the appropriate log DB
+    if table == "account_log":
+        db = acc_log_conn if acc_log_conn is not None else conn
+    elif table == "transaction_log":
+        db = tx_log_conn if tx_log_conn is not None else conn
+    else:
+        db = freeze_log_conn if freeze_log_conn is not None else conn
     if acc_num is None:
-        return conn.execute(
+        return db.execute(
             f"SELECT * FROM {table} ORDER BY timestamp DESC LIMIT ?", (limit,)
         ).fetchall()
-    return conn.execute(
+    return db.execute(
         f"SELECT * FROM {table} WHERE acc_num=? ORDER BY timestamp DESC LIMIT ?",
         (acc_num, limit),
     ).fetchall()
@@ -1343,9 +1340,11 @@ def recent_transactions(
     conn: sqlite3.Connection,
     acc_num: int,
     limit: int = 10,
+    tx_log_conn: sqlite3.Connection | None = None,
 ) -> list[sqlite3.Row]:
     """Return the most recent transaction_log rows for an account."""
-    return conn.execute(
+    db = tx_log_conn if tx_log_conn is not None else conn
+    return db.execute(
         "SELECT * FROM transaction_log WHERE acc_num=? ORDER BY timestamp DESC LIMIT ?",
         (acc_num, limit),
     ).fetchall()
@@ -1563,7 +1562,7 @@ def seed_sample_data(conn: sqlite3.Connection) -> None:
 
 def transfer_manyto1(
     conn: sqlite3.Connection,
-    tx_csv: str,
+    tx_log_conn: sqlite3.Connection,
     sender_nums: list[int],
     receiver_num: int,
     amount_minor: int,
@@ -1573,6 +1572,6 @@ def transfer_manyto1(
     """Minimal working many-to-1 transfer (fixes the truncation)."""
     results = []
     for sender_num in sender_nums:
-        result = transfer(conn, tx_csv, sender_num, receiver_num, amount_minor, category, via_credit)
+        result = transfer(conn, tx_log_conn, sender_num, receiver_num, amount_minor, category, via_credit)
         results.append(f"From {sender_num}: {result}")
     return results

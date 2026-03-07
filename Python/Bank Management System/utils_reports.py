@@ -28,17 +28,17 @@ def generate_pdf_statement(
     conn: sqlite3.Connection,
     acc_num: int,
     out_path: str | None = None,
+    tx_log_conn: sqlite3.Connection | None = None,
 ) -> str:
     """
     Generate a PDF account statement for acc_num.
 
     Args:
-        conn:     Open SQLite connection (row_factory=sqlite3.Row).
-        acc_num:  Account number to generate statement for.
-        out_path: Full file path for the PDF.
-                  If None, the user is prompted:
-                    - Press Enter to use the default path, or
-                    - Enter a custom path.
+        conn:        Open SQLite connection to the main DB (row_factory=sqlite3.Row).
+        acc_num:     Account number to generate statement for.
+        out_path:    Full file path for the PDF.
+                     If None, the user is prompted.
+        tx_log_conn: Connection to the transaction log DB. If None, falls back to conn.
 
     Returns:
         Human-readable result string (success path or error message).
@@ -56,7 +56,8 @@ def generate_pdf_statement(
         return f"[ERROR] Account {acc_num} not found."
 
     # ── fetch last 50 transactions ────────────────────────────────────────────
-    transactions = conn.execute(
+    tx_db = tx_log_conn if tx_log_conn is not None else conn
+    transactions = tx_db.execute(
         """SELECT * FROM transaction_log
            WHERE acc_num=?
            ORDER BY timestamp DESC

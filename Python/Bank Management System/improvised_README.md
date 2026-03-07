@@ -104,6 +104,10 @@ This setup runs only once. After that: SQLite = primary storage, CSV = live log 
 
 > This is asked **once only** on first run. After setup, storage behaviour is fixed: SQLite for all databases , CSV for csv files, XLSX report on-demand.
 
+```
+so basically you input a db or start a fresh db (automatically created), then if you have existing data in csv/xlsx, you import those files and enter all the data into the db
+```
+
 ### Login Screen
 
 | Login Type | What to Enter | Result |
