@@ -9,7 +9,7 @@ A Python console application for managing bank accounts, credit cards, vaults, a
 ```
 bank_system/
 ├── main.py                 # Entry point — login screen + Admin & Customer portals
-├── oop_account_cls.py      # OOP class definitions (Account, CreditCard, Vault, Lock)
+├── account_cls.py          # OOP class definitions (Account, CreditCard, Vault, Lock)
 ├── utils.py                # Helpers — SQLite, hashing, lockout, PDF, currency, export
 ├── utils_validinput.py     # Centralised input-validation helpers
 ├── bank.db                 # Auto-created SQLite database (primary storage)
@@ -17,8 +17,6 @@ bank_system/
 ├── transaction_log.csv     # Append-only transaction log
 └── statements/             # Generated PDF statements
 ```
-
-> `accounts.xlsx` is **not** kept live — XLSX is generated on-demand via the Export menu only (complex binary format; live writes risk corruption and are slow).
 
 ---
 
@@ -35,6 +33,16 @@ bank_system/
 
 ```bash
 pip install tabulate fpdf2 openpyxl
+```
+For Ubuntu/Debian :
+```
+sudo apt update && sudo apt install -y python3-tabulate python3-fpdf2 python3-openpyxl
+```
+or
+```
+sudo apt install python3-tabulate
+sudo apt install python3-fpdf
+sudo apt install python3-openpyxl
 ```
 
 ---
@@ -93,7 +101,6 @@ Import CSV/XLSX files into DB? [yes/no]:
 | **Spending Categories** | Every deduction tagged: `food`, `bills`, `shopping`, `transfer`, `other` |
 | **PDF Statements** | Generated per account via `fpdf2`; saved to `/statements/` |
 | **Freeze** | Admin can freeze/unfreeze accounts; frozen accounts block all login and transactions |
-| **Mobile Top-Up** | Simulated top-up as a deduction transaction |
 | **Credit Cards** | Credit limit, `credit_used` persistence, PIN-authenticated payback (balance or instant cash) |
 | **Vaults** | Sub-wallet per account; password-protected; fund transfer required before destruction |
 

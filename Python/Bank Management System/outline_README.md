@@ -1,7 +1,7 @@
 # 🏦 BankOS v2 — Upgraded Bank Management System
 
 A Python console application for managing bank accounts, credit cards, vaults, and transactions.  
-Upgraded from basic CSV to **SQLite (primary) + CSV logs + on-demand XLSX export**, with multi-currency (BDT/USD), split Admin/Customer portals, SHA-256 password hashing, login lockout, daily transfer limits, spending categories, mobile top-up simulation, PDF statements, and pending-transfer approval workflow.
+Upgraded from basic CSV to **SQLite (primary) + CSV logs + on-demand XLSX export**, with multi-currency (BDT/USD), split Admin/Customer portals, SHA-256 password hashing, login lockout, daily transfer limits, spending categories, simulation, PDF statements, and pending-transfer approval workflow.
 
 ---
 
