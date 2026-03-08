@@ -36,7 +36,7 @@ pip install tabulate fpdf2 openpyxl
 ```
 For Ubuntu/Debian :
 ```
-sudo apt update && sudo apt install -y python3-tabulate python3-fpdf2 python3-openpyxl
+sudo apt update && sudo apt install -y python3-tabulate python3-fpdf python3-openpyxl
 ```
 or
 ```
@@ -55,7 +55,7 @@ python3 main.py
 
 ### First-Run Setup
 
-On first run (or if DB is missing), a setup wizard runs for each storage component (`bank.db`, `account_log`, `transaction_log`, `pending_transfers`):
+On first run (or if DB is missing), a setup wizard runs for each storage component (`bank.db`, `account_log`, `transaction_log`, `pending_transfers`, `freezing_accounts`):
 
 ```
 === BANK MANAGEMENT SYSTEM ===

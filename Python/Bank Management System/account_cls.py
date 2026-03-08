@@ -1,6 +1,6 @@
 """
 account_cls.py
-Core OOP models for BankOS v2.
+Core OOP models for BankOS.
 
 Changes from v1:
   - All balances stored as integers (smallest unit: paise/cents)
