@@ -114,23 +114,28 @@ def init_storage(db_path: str) -> sqlite3.Connection:
 #  First-run setup wizard
 # =============================================================================
 
-def first_run_setup() -> tuple[sqlite3.Connection, sqlite3.Connection, sqlite3.Connection, sqlite3.Connection]:
+def first_run_setup() -> tuple[
+    sqlite3.Connection, sqlite3.Connection, sqlite3.Connection,
+    sqlite3.Connection, sqlite3.Connection,
+]:
     """
     Interactive first-run wizard.
-    Returns (conn, acc_log_conn, tx_log_conn, pending_transfer_conn).
+    Returns (conn, acc_log_conn, tx_log_conn, freeze_log_conn, pending_conn).
 
-    Flow (per README):
-      [1] Import existing .db file
-      [2] Start fresh .db file
+    Flow (per outline_README.md lines 107-157):
+      === BANK MANAGEMENT SYSTEM ===
+      [1] Import existing database
+      [2] Start fresh database
       [3] Exit
+      → Optional CSV/XLSX import into DB
 
-      → Optional CSV/XLSX import into DB tables
-      → account_log DB setup   (same [1]/[2]/[3] flow as main DB)
-      → transaction_log DB setup  (same flow)
-      → pending_transfers DB setup  (same flow)
+      --- Log Table Setup ---
+      Account log setup:         same [1]/[2]/[3] + optional CSV/XLSX import
+      Transaction log setup:     same flow
+      Account Freeze data setup: same flow
+      Pending transfers setup:   same flow
     """
-    print("\n=============== BANK MANAGEMENT SYSTEM ===============")
-    print("\n=== First-Run Setup ===")
+    print("\n=== BANK MANAGEMENT SYSTEM ===")
     print("  [1] Import existing database")
     print("  [2] Start fresh database")
     print("  [3] Exit")
@@ -145,14 +150,14 @@ def first_run_setup() -> tuple[sqlite3.Connection, sqlite3.Connection, sqlite3.C
         raise SystemExit(0)
 
     if choice == "1":
-        # Must supply a file that actually exists
         while True:
             db_name = input("  Enter .db filename to import: ").strip()
             if not db_name:
                 print("  [!] Filename cannot be empty.")
                 continue
-            if not db_name.endswith(".db"):
-                db_name += ".db"
+            if not db_name.lower().endswith(".db"):
+                print(f"  [!] File must be a .db file (got '{db_name}').")
+                continue
             from pathlib import Path as _P
             if not _P(db_name).exists():
                 print(f"  [!] File '{db_name}' not found. Try again.")
@@ -162,43 +167,49 @@ def first_run_setup() -> tuple[sqlite3.Connection, sqlite3.Connection, sqlite3.C
         print(f"  [OK] Opened existing database: {db_name}")
     else:
         db_name = input("  New database name (Enter for 'bank.db'): ").strip() or "bank.db"
-        if not db_name.endswith(".db"):
+        if not db_name.lower().endswith(".db"):
             db_name += ".db"
         conn = init_storage(db_name)
         print(f"  [OK] Created fresh database: {db_name}")
 
     # ── Optional CSV / XLSX import ────────────────────────────────────────────
     while True:
-        ans = input("  Import CSV/XLSX files into DB? [yes/no]: ").strip().lower()
+        ans = input("\n  Import CSV/XLSX files into DB? [yes/no]: ").strip().lower()
         if ans in ("yes", "y"):
-            _run_file_import_wizard(conn)
+            _run_file_import_wizard(conn, restrict_table="accounts")
             break
         if ans in ("no", "n"):
             break
         print("  [!] Enter yes or no.")
 
     # ── Log DB setup — each log gets its own .db, same flow as main DB ───────
-    print("\n--- Log Database Setup ---")
-    acc_log_conn    = _setup_log_db_menu(
+    print("\n--- Log Table Setup ---")
+    acc_log_conn = _setup_log_db_menu(
         log_label="Account log",
         default="account_log.db",
         schema=LOG_SCHEMAS["account_log"],
         table="account_log",
     )
-    tx_log_conn     = _setup_log_db_menu(
+    tx_log_conn = _setup_log_db_menu(
         log_label="Transaction log",
         default="transaction_log.db",
         schema=LOG_SCHEMAS["transaction_log"],
         table="transaction_log",
     )
     freeze_log_conn = _setup_log_db_menu(
+        log_label="Account Freeze data",
+        default="freezing_account.db",
+        schema=LOG_SCHEMAS["freezing_account"],
+        table="freezing_account",
+    )
+    pending_conn = _setup_log_db_menu(
         log_label="Pending transfers",
         default="pending_transfers.db",
         schema=LOG_SCHEMAS["pending_transfers"],
         table="pending_transfers",
     )
 
-    return conn, acc_log_conn, tx_log_conn, freeze_log_conn
+    return conn, acc_log_conn, tx_log_conn, freeze_log_conn, pending_conn
 
 
 # ── Per-log DB schemas ────────────────────────────────────────────────────────
@@ -221,6 +232,13 @@ LOG_SCHEMAS: dict[str, str] = {
         category      TEXT    NOT NULL DEFAULT 'other',
         status        TEXT    NOT NULL,
         balance_after INTEGER NOT NULL
+    )""",
+    "freezing_account": """CREATE TABLE IF NOT EXISTS freezing_account (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT    NOT NULL,
+        acc_num   INTEGER NOT NULL,
+        action    TEXT    NOT NULL,
+        details   TEXT    NOT NULL
     )""",
     "pending_transfers": """CREATE TABLE IF NOT EXISTS pending_transfers (
         id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -269,8 +287,8 @@ def _setup_log_db_menu(
     Returns an open sqlite3.Connection for the log DB.
     """
     print(f"\n  {log_label} setup:")
-    print(f"    [1] Import existing {log_label.lower()} database")
-    print(f"    [2] Start fresh {log_label.lower()} database")
+    print(f"    [1] Import existing database")
+    print(f"    [2] Start fresh (no import)")
     print(f"    [3] Exit")
 
     while True:
@@ -283,14 +301,14 @@ def _setup_log_db_menu(
         raise SystemExit(0)
 
     if sub == "1":
-        # Must supply a file that actually exists — identical to main DB import loop
         while True:
             db_name = input(f"    Enter .db filename to import: ").strip()
             if not db_name:
                 print("    [!] Filename cannot be empty.")
                 continue
-            if not db_name.endswith(".db"):
-                db_name += ".db"
+            if not db_name.lower().endswith(".db"):
+                print(f"    [!] File must be a .db file (got '{db_name}').")
+                continue
             if not Path(db_name).exists():
                 print(f"    [!] File '{db_name}' not found. Try again.")
                 continue
@@ -299,14 +317,14 @@ def _setup_log_db_menu(
         print(f"    [OK] Opened existing {log_label.lower()} database: {db_name}")
     else:  # sub == "2"
         db_name = input(f"    New database name (Enter for '{default}'): ").strip() or default
-        if not db_name.endswith(".db"):
+        if not db_name.lower().endswith(".db"):
             db_name += ".db"
         log_conn = _init_log_db(db_name, schema)
         print(f"    [OK] Created fresh {log_label.lower()} database: {db_name}")
 
     # ── Optional CSV/XLSX import into this log DB ─────────────────────────────
     while True:
-        ans = input(f"    Import CSV/XLSX data into {log_label.lower()}? [yes/no]: ").strip().lower()
+        ans = input(f"\n    Import CSV/XLSX files into DB? [yes/no]: ").strip().lower()
         if ans in ("yes", "y"):
             _run_file_import_wizard(log_conn, restrict_table=table)
             break
@@ -328,11 +346,11 @@ def _run_file_import_wizard(conn: sqlite3.Connection, restrict_table: str | None
       Duplicates / invalid rows are skipped with a warning.
     """
     IMPORTABLE = ["accounts", "account_log", "transaction_log",
-                  "pending_transfers"]
+                  "freezing_account", "pending_transfers"]
 
     # How many files?
     while True:
-        raw = input("  How many files to import? ").strip()
+        raw = input("  How many files to import? : ").strip()
         try:
             count = int(raw)
             if count >= 1:
@@ -381,7 +399,10 @@ def _run_file_import_wizard(conn: sqlite3.Connection, restrict_table: str | None
 
         # Step 3: filename — must exist and have correct extension
         while True:
-            filename = input(f"  Filename ({ext}) for table '{table}': ").strip()
+            if ext == ".csv":
+                filename = input(f"  Enter .csv file name : ").strip()
+            else:
+                filename = input(f"  Enter .xlsx file name : ").strip()
 
             if not filename:
                 print("  [!] Filename cannot be empty.")
@@ -482,10 +503,10 @@ def log_freeze_action(
     action: str,
     details: str,
 ) -> None:
-    """Write freeze action to the account_log (freeze_log removed; use account_log instead)."""
+    """Write freeze/unfreeze action to the dedicated freezing_account DB."""
     ts = now_display()
     log_conn.execute(
-        "INSERT INTO account_log(timestamp, acc_num, action, details) VALUES (?,?,?,?)",
+        "INSERT INTO freezing_account(timestamp, acc_num, action, details) VALUES (?,?,?,?)",
         (ts, acc_num, action, details),
     )
     log_conn.commit()
@@ -646,6 +667,7 @@ def _execute_transfer(
     category: str,
     via_credit: bool,
     threshold_override: int | None = None,
+    pending_conn: sqlite3.Connection | None = None,
 ) -> str:
     """
     Core 1-to-1 transfer logic shared by all transfer modes and review_pending.
@@ -653,7 +675,12 @@ def _execute_transfer(
     threshold_override:
         None          → use PENDING_THRESHOLD (normal path)
         _APPROVE_BYPASS → admin-approved path; skips daily-limit + threshold checks
+
+    pending_conn:
+        Connection to the pending_transfers DB. If None, falls back to conn.
     """
+    pdb = pending_conn if pending_conn is not None else conn
+
     s = conn.execute(
         "SELECT * FROM accounts WHERE acc_num=?", (sender_num,)
     ).fetchone()
@@ -685,7 +712,7 @@ def _execute_transfer(
                  if threshold_override is not None
                  else PENDING_THRESHOLD.get(s["currency"], PENDING_THRESHOLD["BDT"]))
     if amount_minor >= threshold:
-        conn.execute(
+        pdb.execute(
             """INSERT INTO pending_transfers
                (timestamp, sender_acc_num, receiver_acc_num, amount,
                 currency, via_credit, status)
@@ -693,7 +720,7 @@ def _execute_transfer(
             (now_display(), sender_num, str(receiver_num),
              amount_minor, s["currency"], int(via_credit)),
         )
-        conn.commit()
+        pdb.commit()
         log_transaction(conn, tx_log_conn, sender_num, "transfer_out", amount_minor,
                         s["currency"], category, "pending", s["acc_balance"])
         return (f"Transfer of {format_money(amount_minor, s['currency'])} exceeds "
@@ -750,10 +777,12 @@ def transfer(
     amount_minor: int,
     category: str = "transfer",
     via_credit: bool = False,
+    pending_conn: sqlite3.Connection | None = None,
 ) -> str:
     """Public 1-to-1 transfer with daily limit + pending threshold."""
     return _execute_transfer(conn, tx_log_conn, sender_num, receiver_num,
-                             amount_minor, category, via_credit)
+                             amount_minor, category, via_credit,
+                             pending_conn=pending_conn)
 
 
 def transfer_1tomany(
@@ -764,11 +793,12 @@ def transfer_1tomany(
     amount_minor: int,
     category: str = "transfer",
     via_credit: bool = False,
+    pending_conn: sqlite3.Connection | None = None,
 ) -> list[str]:
     """Transfer amount_minor from one sender to each receiver. Returns one result string per receiver."""
     return [
         f"→ Acc {rec}: "
-        f"{_execute_transfer(conn, tx_log_conn, sender_num, rec, amount_minor, category, via_credit)}"
+        f"{_execute_transfer(conn, tx_log_conn, sender_num, rec, amount_minor, category, via_credit, pending_conn=pending_conn)}"
         for rec in receiver_nums
     ]
 
@@ -781,10 +811,11 @@ def transfer_manyto1(
     amount_minor: int,
     category: str = "transfer",
     via_credit: bool = False,
+    pending_conn: sqlite3.Connection | None = None,
 ) -> list[str]:
     """Transfer amount_minor from each sender to one receiver."""
     return [
-        f"→ Acc {sen}: {_execute_transfer(conn, tx_log_conn, sen, receiver_num, amount_minor, category, via_credit)}"
+        f"→ Acc {sen}: {_execute_transfer(conn, tx_log_conn, sen, receiver_num, amount_minor, category, via_credit, pending_conn=pending_conn)}"
         for sen in sender_nums
     ]
 
@@ -805,6 +836,7 @@ def review_pending(
     tx_log_conn: sqlite3.Connection,
     transfer_id: int,
     approve: bool,
+    pending_conn: sqlite3.Connection | None = None,
 ) -> str:
     """
     Admin approves or rejects a pending transfer.
@@ -818,7 +850,8 @@ def review_pending(
         Reverses the credit_used charge if the transfer was via_credit.
         Marks the row 'rejected'.
     """
-    row = conn.execute(
+    pdb = pending_conn if pending_conn is not None else conn
+    row = pdb.execute(
         "SELECT * FROM pending_transfers WHERE id=? AND status='pending'",
         (transfer_id,),
     ).fetchone()
@@ -834,11 +867,12 @@ def review_pending(
                 "UPDATE accounts SET credit_used=MAX(0,credit_used-?) WHERE acc_num=?",
                 (row["amount"], row["sender_acc_num"]),
             )
-        conn.execute(
+        pdb.execute(
             "UPDATE pending_transfers SET status='rejected', reviewed_at=? WHERE id=?",
             (ts_now, transfer_id),
         )
         conn.commit()
+        pdb.commit()
         return "Transfer rejected."
 
     # ── approve: bypass threshold + daily-limit using _APPROVE_BYPASS ─────────
@@ -850,13 +884,14 @@ def review_pending(
         category="transfer",
         via_credit=bool(row["via_credit"]),
         threshold_override=_APPROVE_BYPASS,
+        pending_conn=pending_conn,
     )
     new_status = "approved" if "successful" in res else "rejected"
-    conn.execute(
+    pdb.execute(
         "UPDATE pending_transfers SET status=?, reviewed_at=? WHERE id=?",
         (new_status, ts_now, transfer_id),
     )
-    conn.commit()
+    pdb.commit()
     return f"[{new_status.upper()}] {res}"
 
 
@@ -1287,13 +1322,17 @@ def list_accounts(
     ).fetchall()
 
 
-def bank_overview(conn: sqlite3.Connection) -> dict:
+def bank_overview(
+    conn: sqlite3.Connection,
+    pending_conn: sqlite3.Connection | None = None,
+) -> dict:
     """
     Return a summary dict:
         totals          → {BDT: int, USD: int}  (minor units)
         frozen_accounts → int
         pending_count   → int
     """
+    pdb = pending_conn if pending_conn is not None else conn
     totals = {
         r["currency"]: r["s"]
         for r in conn.execute(
@@ -1304,7 +1343,7 @@ def bank_overview(conn: sqlite3.Connection) -> dict:
     frozen  = conn.execute(
         "SELECT COUNT(*) AS c FROM accounts WHERE is_frozen=1"
     ).fetchone()["c"]
-    pending = conn.execute(
+    pending = pdb.execute(
         "SELECT COUNT(*) AS c FROM pending_transfers WHERE status='pending'"
     ).fetchone()["c"]
     return {"totals": totals, "frozen_accounts": frozen, "pending_count": pending}
@@ -1318,21 +1357,30 @@ def get_logs(
     acc_log_conn: sqlite3.Connection | None = None,
     tx_log_conn: sqlite3.Connection | None = None,
     freeze_log_conn: sqlite3.Connection | None = None,
+    pending_conn: sqlite3.Connection | None = None,
 ) -> list[sqlite3.Row]:
-    """Retrieve rows from account_log, transaction_log, or pending_transfers.
+    """Retrieve rows from account_log, transaction_log, freezing_account, or pending_transfers.
     Uses the dedicated log DB connection if provided, else falls back to main conn."""
-    if table not in {"account_log", "transaction_log", "pending_transfers"}:
+    if table not in {"account_log", "transaction_log", "freezing_account", "pending_transfers"}:
         return []
     # Route to the appropriate log DB
     if table == "account_log":
         db = acc_log_conn if acc_log_conn is not None else conn
     elif table == "transaction_log":
         db = tx_log_conn if tx_log_conn is not None else conn
-    else:
+    elif table == "freezing_account":
         db = freeze_log_conn if freeze_log_conn is not None else conn
+    else:  # pending_transfers
+        db = pending_conn if pending_conn is not None else conn
+    # pending_transfers uses sender_acc_num, not acc_num
     if acc_num is None:
         return db.execute(
             f"SELECT * FROM {table} ORDER BY timestamp DESC LIMIT ?", (limit,)
+        ).fetchall()
+    if table == "pending_transfers":
+        return db.execute(
+            f"SELECT * FROM {table} WHERE sender_acc_num=? ORDER BY timestamp DESC LIMIT ?",
+            (acc_num, limit),
         ).fetchall()
     return db.execute(
         f"SELECT * FROM {table} WHERE acc_num=? ORDER BY timestamp DESC LIMIT ?",
@@ -1520,6 +1568,11 @@ def _insert_row(conn: sqlite3.Connection, table: str, row: dict) -> None:
                 row.get("reviewed_at") or None,
             ),
         )
+    elif table == "freezing_account":
+        conn.execute(
+            "INSERT INTO freezing_account(timestamp, acc_num, action, details) VALUES (?,?,?,?)",
+            (row["timestamp"], int(row["acc_num"]), row["action"], row["details"]),
+        )
     else:
         raise ValueError(f"Unsupported import table: '{table}'")
 
@@ -1567,10 +1620,11 @@ def transfer_manyto1(
     amount_minor: int,
     category: str = "transfer",
     via_credit: bool = False,
+    pending_conn: sqlite3.Connection | None = None,
 ) -> list[str]:
     """Minimal working many-to-1 transfer (fixes the truncation)."""
     results = []
     for sender_num in sender_nums:
-        result = transfer(conn, tx_log_conn, sender_num, receiver_num, amount_minor, category, via_credit)
+        result = transfer(conn, tx_log_conn, sender_num, receiver_num, amount_minor, category, via_credit, pending_conn=pending_conn)
         results.append(f"From {sender_num}: {result}")
     return results

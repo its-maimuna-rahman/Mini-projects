@@ -2,9 +2,8 @@
 main.py — BankOS v2
 Single entry point: first-run setup → login screen → Admin portal / Customer portal.
 
-CSV paths (account_log, transaction_log, pending_transfers) are collected once during
-first_run_setup() and then threaded through every portal and sub-function as a
-single `Logs` namedtuple so nothing is ever hardcoded.
+All data lives in SQLite databases. CSV/XLSX import is supported at first-run setup.
+XLSX/CSV export is on-demand only from the Admin portal.
 
 Admin  menu : 9 options
 Customer menu: 8 options
@@ -58,113 +57,48 @@ from utils_storage import (
     vault_add,
     vault_deduct,
 )
+from utils_validinput import (
+    prompt_positive_int,
+    prompt_amount_minor,
+    prompt_yes_no,
+    prompt_category,
+    prompt_currency,
+    prompt_menu_choice,
+    prompt_filter_key,
+    prompt_password,
+    prompt_pin,
+    prompt_account_number,
+)
 
 
 # ── constants ─────────────────────────────────────────────────────────────────
 
-VALID_CATEGORIES = ("food", "bills", "shopping", "transfer", "other")
-FILTER_KEYS      = list(FILTER_WHERE.keys())
+FILTER_KEYS = list(FILTER_WHERE.keys())
 
 
 # ── log-path bundle ───────────────────────────────────────────────────────────
 
 class Logs(NamedTuple):
-    """Holds the three log DB connections for the lifetime of the session."""
-    acc:     sqlite3.Connection
-    tx:      sqlite3.Connection
-    freeze:  sqlite3.Connection  # now points to pending_transfers DB
+    """Holds the four log DB connections for the lifetime of the session."""
+    acc:     sqlite3.Connection   # account_log DB
+    tx:      sqlite3.Connection   # transaction_log DB
+    freeze:  sqlite3.Connection   # freezing_account DB
+    pending: sqlite3.Connection   # pending_transfers DB
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Input helpers
+#  Input helpers (thin wrappers where prompt_* doesn't cover it directly)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _input(prompt: str = "") -> str:
     return input(prompt).strip()
 
 
-def _safe_int(prompt: str) -> int:
-    while True:
-        raw = _input(prompt)
-        try:
-            return int(raw)
-        except ValueError:
-            print("  [!] Enter a whole number.")
-
-
-def _safe_positive_int(prompt: str) -> int:
-    while True:
-        val = _safe_int(prompt)
-        if val > 0:
-            return val
-        print("  [!] Must be greater than 0.")
-
-
-def _safe_amount_minor(prompt: str) -> int:
-    while True:
-        raw = _input(prompt)
-        minor = parse_amount_input(raw)
-        if minor is not None:
-            return minor
-        print("  [!] Enter a positive number (e.g. 100 or 120.50).")
-
-
-def _safe_yes_no(prompt: str) -> bool:
-    while True:
-        ans = _input(prompt).lower()
-        if ans in ("yes", "y"):
-            return True
-        if ans in ("no", "n"):
-            return False
-        print("  [!] Enter yes or no.")
-
-
-def _safe_category(prompt: str = "  Category (food/bills/shopping/transfer/other): ") -> str:
-    while True:
-        cat = _input(prompt).lower()
-        if cat in VALID_CATEGORIES:
-            return cat
-        print(f"  [!] Choose from: {', '.join(VALID_CATEGORIES)}")
-
-
-def _safe_currency(prompt: str = "  Currency (BDT/USD): ") -> str:
-    while True:
-        cur = _input(prompt).upper()
-        if cur in SUPPORTED:
-            return cur
-        print(f"  [!] Choose from: {', '.join(sorted(SUPPORTED))}")
-
-
-def _safe_menu(prompt: str, valid: set) -> str:
-    while True:
-        ch = _input(prompt)
-        if ch in valid:
-            return ch
-        print(f"  [!] Invalid choice. Options: {', '.join(sorted(valid))}")
-
-
-def _safe_filter_key(prompt: str = "  Filter: ") -> str:
-    print("  Filter options:")
-    for i, k in enumerate(FILTER_KEYS, 1):
-        print(f"    [{i}] {k}")
-    while True:
-        raw = _input(prompt)
-        if raw in FILTER_WHERE:
-            return raw
-        try:
-            idx = int(raw) - 1
-            if 0 <= idx < len(FILTER_KEYS):
-                return FILTER_KEYS[idx]
-        except ValueError:
-            pass
-        print(f"  [!] Enter a filter name or number (1-{len(FILTER_KEYS)}).")
-
-
 def _divider(title: str = "") -> None:
     if title:
-        print(f"\n{'─' * 10}  {title}  {'─' * 10}")
+        print(f"\n{'\u2500' * 10}  {title}  {'\u2500' * 10}")
     else:
-        print("─" * 40)
+        print("\u2500" * 40)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -237,8 +171,8 @@ def _ensure_csv(path: str, header: list) -> None:
 
 def _start_session():
     """Always runs first_run_setup() on every program start."""
-    conn, acc_log_conn, tx_log_conn, freeze_log_conn = first_run_setup()
-    return conn, Logs(acc=acc_log_conn, tx=tx_log_conn, freeze=freeze_log_conn)
+    conn, acc_log_conn, tx_log_conn, freeze_log_conn, pending_conn = first_run_setup()
+    return conn, Logs(acc=acc_log_conn, tx=tx_log_conn, freeze=freeze_log_conn, pending=pending_conn)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -261,13 +195,13 @@ def admin_portal(conn, logs: Logs) -> None:
         print("  [0] Logout")
         _divider()
 
-        ch = _safe_menu("  Select: ", {"1","2","3","4","5","6","7","8","9","0"})
+        ch = prompt_menu_choice("  Select: ", {"1","2","3","4","5","6","7","8","9","0"})
 
         if   ch == "1": _admin_account_crud(conn, logs)
         elif ch == "2": _admin_vault_crud(conn, logs)
         elif ch == "3": _admin_show_accounts(conn)
         elif ch == "4": _admin_logs(conn, logs)
-        elif ch == "5": _admin_overview(conn)
+        elif ch == "5": _admin_overview(conn, logs)
         elif ch == "6": _admin_freeze(conn, logs)
         elif ch == "7": _admin_pending(conn, logs)
         elif ch == "8": _admin_pdf(conn, logs)
@@ -285,24 +219,21 @@ def _admin_account_crud(conn, logs: Logs) -> None:
     print("  [3] Convert account type (credit <-> non-credit)")
     print("  [4] Set daily transfer limit")
     print("  [0] Back")
-    sub = _safe_menu("  Choose: ", {"1","2","3","4","0"})
+    sub = prompt_menu_choice("  Choose: ", {"1","2","3","4","0"})
     if sub == "0":
         return
 
     if sub == "1":
         _divider("Add Account")
-        acc      = _safe_positive_int("  Account number: ")
-        pwd      = _input("  Password: ")
-        if not pwd:
-            print("  [!] Password cannot be empty.")
-            return
-        currency = _safe_currency()
-        acc_type = _safe_menu(
+        acc      = prompt_positive_int("  Account number: ")
+        pwd      = prompt_password("  Password: ")
+        currency = prompt_currency()
+        acc_type = prompt_menu_choice(
             "  Type (credit_card / non_credit_card): ",
             {"credit_card", "non_credit_card"},
         )
-        bal = _safe_amount_minor("  Opening balance (major units, e.g. 500): ")
-        dtl = _safe_amount_minor("  Daily transfer limit (major units, e.g. 5000): ")
+        bal = prompt_amount_minor("  Opening balance (major units, e.g. 500): ")
+        dtl = prompt_amount_minor("  Daily transfer limit (major units, e.g. 5000): ")
 
         result = create_account(conn, acc, pwd, currency, acc_type, bal, dtl)
         print(f"  {result}")
@@ -311,7 +242,7 @@ def _admin_account_crud(conn, logs: Logs) -> None:
                 conn, logs.acc, acc, "ACCOUNT_ADDED",
                 f"New {acc_type} | {currency} | opening_bal={format_money(bal, currency)}",
             )
-            if _safe_yes_no("  Attach a vault now? [yes/no]: "):
+            if prompt_yes_no("  Attach a vault now? [yes/no]: "):
                 vno = _input("  Vault number (e.g. V001): ")
                 vpw = _input("  Vault password: ")
                 if vno and vpw:
@@ -327,13 +258,13 @@ def _admin_account_crud(conn, logs: Logs) -> None:
 
     elif sub == "2":
         _divider("Delete Account")
-        acc = _safe_positive_int("  Account number to delete: ")
+        acc = prompt_positive_int("  Account number to delete: ")
         row = conn.execute("SELECT * FROM accounts WHERE acc_num=?", (acc,)).fetchone()
         if not row:
             print("  [!] Account not found.")
             return
         _display_account_row(row)
-        if not _safe_yes_no(f"\n  Permanently delete account {acc}? [yes/no]: "):
+        if not prompt_yes_no(f"\n  Permanently delete account {acc}? [yes/no]: "):
             print("  Cancelled.")
             return
         result = delete_account(conn, acc)
@@ -343,8 +274,8 @@ def _admin_account_crud(conn, logs: Logs) -> None:
 
     elif sub == "3":
         _divider("Convert Account Type")
-        acc     = _safe_positive_int("  Account number: ")
-        to_type = _safe_menu(
+        acc     = prompt_positive_int("  Account number: ")
+        to_type = prompt_menu_choice(
             "  Convert to (credit_card / non_credit_card): ",
             {"credit_card", "non_credit_card"},
         )
@@ -356,7 +287,7 @@ def _admin_account_crud(conn, logs: Logs) -> None:
 
     elif sub == "4":
         _divider("Set Daily Transfer Limit")
-        acc = _safe_positive_int("  Account number: ")
+        acc = prompt_positive_int("  Account number: ")
         row = conn.execute(
             "SELECT acc_num, currency, daily_transfer_limit FROM accounts WHERE acc_num=?",
             (acc,),
@@ -365,7 +296,7 @@ def _admin_account_crud(conn, logs: Logs) -> None:
             print("  [!] Account not found.")
             return
         print(f"  Current limit: {format_money_dual(row['daily_transfer_limit'], row['currency'])}")
-        new_limit = _safe_amount_minor("  New daily transfer limit (major units): ")
+        new_limit = prompt_amount_minor("  New daily transfer limit (major units): ")
         result    = set_daily_limit(conn, acc, new_limit)
         print(f"  {result}")
         log_account_action(
@@ -380,11 +311,11 @@ def _admin_vault_crud(conn, logs: Logs) -> None:
     print("  [1] Create vault")
     print("  [2] Destroy vault")
     print("  [0] Back")
-    sub = _safe_menu("  Choose: ", {"1","2","0"})
+    sub = prompt_menu_choice("  Choose: ", {"1","2","0"})
     if sub == "0":
         return
 
-    acc = _safe_positive_int("  Account number: ")
+    acc = prompt_positive_int("  Account number: ")
     row = conn.execute("SELECT * FROM accounts WHERE acc_num=?", (acc,)).fetchone()
     if not row:
         print("  [!] Account not found.")
@@ -440,10 +371,10 @@ def _admin_vault_crud(conn, logs: Logs) -> None:
             print(f"\n  Vault has {format_money_dual(vault_balance, currency)}.")
             print("  [1] Transfer to account balance (requires account password)")
             print("  [2] Pay back credit card (requires CC PIN — CC accounts only)")
-            dest = _safe_menu("  Choose destination: ", {"1", "2"})
+            dest = prompt_menu_choice("  Choose destination: ", {"1", "2"})
 
             if dest == "1":
-                acc_pwd = _input("  Account password: ")
+                acc_pwd = prompt_password("  Account password: ")
                 ok, msg = _check_account_password(conn, acc, acc_pwd)
                 if not ok:
                     print(f"  [!] {msg} Vault not destroyed.")
@@ -491,8 +422,8 @@ def _admin_vault_crud(conn, logs: Logs) -> None:
 def _admin_show_accounts(conn) -> None:
     """Option 3 — Show all accounts with filter + dual-currency toggle."""
     _divider("Show Accounts")
-    flt  = _safe_filter_key("  Select filter: ")
-    dual = _safe_yes_no("  Show dual-currency display? [yes/no]: ")
+    flt  = prompt_filter_key("  Select filter: ", filter_map=FILTER_WHERE)
+    dual = prompt_yes_no("  Show dual-currency display? [yes/no]: ")
     rows = list_accounts(conn, flt)
     if not rows:
         print("  No accounts match this filter.")
@@ -509,20 +440,27 @@ def _admin_logs(conn, logs: Logs) -> None:
     _divider("View Logs")
     print("  [1] Account log")
     print("  [2] Transaction log")
-    print("  [3] Pending transfers log")
+    print("  [3] Freeze log")
+    print("  [4] Pending transfers log")
     print("  [0] Back")
-    sub = _safe_menu("  Choose: ", {"1","2","3","0"})
+    sub = prompt_menu_choice("  Choose: ", {"1","2","3","4","0"})
     if sub == "0":
         return
 
-    table     = {"1": "account_log", "2": "transaction_log", "3": "pending_transfers"}[sub]
+    table = {
+        "1": "account_log",
+        "2": "transaction_log",
+        "3": "freezing_account",
+        "4": "pending_transfers",
+    }[sub]
     acc_raw   = _input("  Filter by account number (Enter for all): ")
     acc_num   = int(acc_raw) if acc_raw.isdigit() else None
     limit_raw = _input("  Max rows to show (Enter for 50): ")
     limit     = int(limit_raw) if limit_raw.isdigit() else 50
 
     rows = get_logs(conn, table, acc_num, limit,
-                    acc_log_conn=logs.acc, tx_log_conn=logs.tx, freeze_log_conn=logs.freeze)
+                    acc_log_conn=logs.acc, tx_log_conn=logs.tx,
+                    freeze_log_conn=logs.freeze, pending_conn=logs.pending)
     if not rows:
         print("  No log entries found.")
         return
@@ -532,15 +470,17 @@ def _admin_logs(conn, logs: Logs) -> None:
     for row in rows:
         if table == "transaction_log":
             _display_transaction_row(row)
+        elif table == "pending_transfers":
+            _display_pending_row(row)
         else:
             _display_log_row(row)
     _divider()
 
 
-def _admin_overview(conn) -> None:
+def _admin_overview(conn, logs: Logs) -> None:
     """Option 5 — Bank overview: pool totals, frozen count, pending count."""
     _divider("Bank Overview")
-    ov = bank_overview(conn)
+    ov = bank_overview(conn, pending_conn=logs.pending)
     print("  Total balances by currency:")
     for cur, total in ov.get("totals", {}).items():
         print(f"    {format_money_dual(total, cur)}")
@@ -552,7 +492,7 @@ def _admin_overview(conn) -> None:
 def _admin_freeze(conn, logs: Logs) -> None:
     """Option 6 — Freeze or unfreeze an account. Writes to account_log."""
     _divider("Freeze / Unfreeze Account")
-    acc = _safe_positive_int("  Account number: ")
+    acc = prompt_positive_int("  Account number: ")
     row = conn.execute(
         "SELECT acc_num, is_frozen FROM accounts WHERE acc_num=?", (acc,)
     ).fetchone()
@@ -561,7 +501,7 @@ def _admin_freeze(conn, logs: Logs) -> None:
         return
 
     print(f"  Account {acc} is currently: {'FROZEN' if row['is_frozen'] else 'Active'}")
-    action = _safe_menu("  Action (freeze / unfreeze): ", {"freeze", "unfreeze"})
+    action = prompt_menu_choice("  Action (freeze / unfreeze): ", {"freeze", "unfreeze"})
     result = freeze_account(conn, acc, freeze=(action == "freeze"))
     print(f"  {result}")
 
@@ -574,7 +514,7 @@ def _admin_freeze(conn, logs: Logs) -> None:
 def _admin_pending(conn, logs: Logs) -> None:
     """Option 7 — List pending transfers, approve or reject."""
     _divider("Pending Transfers")
-    rows = get_pending_transfers(conn)
+    rows = get_pending_transfers(logs.pending)
     if not rows:
         print("  No pending transfers.")
         return
@@ -584,17 +524,15 @@ def _admin_pending(conn, logs: Logs) -> None:
         _display_pending_row(row)
 
     _divider()
-    pid = _safe_int("  Enter transfer ID to review (0 to cancel): ")
-    if pid <= 0:
-        return
-    approve = _safe_yes_no(f"  Approve transfer ID {pid}? [yes/no]: ")
-    print(f"  {review_pending(conn, logs.tx, pid, approve)}")
+    pid = prompt_positive_int("  Enter transfer ID to review (0 not allowed): ")
+    approve = prompt_yes_no(f"  Approve transfer ID {pid}? [yes/no]: ")
+    print(f"  {review_pending(conn, logs.tx, pid, approve, pending_conn=logs.pending)}")
 
 
 def _admin_pdf(conn, logs: Logs) -> None:
     """Option 8 — Generate PDF statement for any account."""
     _divider("Generate PDF Statement")
-    acc = _safe_positive_int("  Account number: ")
+    acc = prompt_positive_int("  Account number: ")
     if not conn.execute("SELECT acc_num FROM accounts WHERE acc_num=?", (acc,)).fetchone():
         print("  [!] Account not found.")
         return
@@ -607,11 +545,11 @@ def _admin_export(conn) -> None:
     print("  [1] XLSX")
     print("  [2] CSV")
     print("  [0] Back")
-    fmt = _safe_menu("  Format: ", {"1","2","0"})
+    fmt = prompt_menu_choice("  Format: ", {"1","2","0"})
     if fmt == "0":
         return
 
-    flt      = _safe_filter_key("  Select filter: ")
+    flt      = prompt_filter_key("  Select filter: ", filter_map=FILTER_WHERE)
     filename = _input("  Output filename (Enter for auto-generated name): ")
     ext      = "xlsx" if fmt == "1" else "csv"
     if not filename:
@@ -653,7 +591,7 @@ def customer_portal(conn, acc_num: int, logs: Logs) -> None:
         print("  [8] Logout")
         _divider()
 
-        ch = _safe_menu("  Select: ", {"1","2","3","4","5","6","7","8"})
+        ch = prompt_menu_choice("  Select: ", {"1","2","3","4","5","6","7","8"})
 
         if   ch == "1": _cust_view(conn, acc_num)
         elif ch == "2": _cust_add_deduct(conn, acc_num, logs)
@@ -688,14 +626,14 @@ def _cust_add_deduct(conn, acc_num: int, logs: Logs) -> None:
     print("  [1] Add balance")
     print("  [2] Deduct balance")
     print("  [0] Back")
-    sub = _safe_menu("  Choose: ", {"1","2","0"})
+    sub = prompt_menu_choice("  Choose: ", {"1","2","0"})
     if sub == "0":
         return
 
     native_currency = row["currency"]
     print(f"  Account currency: {native_currency}")
-    input_currency  = _safe_currency("  Enter amount in currency (BDT/USD): ")
-    raw_amt         = _safe_amount_minor(f"  Amount ({input_currency}): ")
+    input_currency  = prompt_currency("  Enter amount in currency (BDT/USD): ")
+    raw_amt         = prompt_amount_minor(f"  Amount ({input_currency}): ")
     amount_native   = convert_minor(raw_amt, input_currency, native_currency)
 
     if sub == "1":
@@ -713,7 +651,7 @@ def _cust_add_deduct(conn, acc_num: int, logs: Logs) -> None:
               f"New balance: {format_money_dual(new_bal, native_currency)}")
 
     elif sub == "2":
-        cat = _safe_category()
+        cat = prompt_category()
         if row["acc_balance"] < amount_native:
             log_transaction(conn, logs.tx, acc_num, "deduct", amount_native,
                             native_currency, cat, "failed", row["acc_balance"])
@@ -748,7 +686,7 @@ def _cust_transfer(conn, acc_num: int, logs: Logs) -> None:
     print("  [2] Transfer 1 to many")
     print("  [3] Transfer many to 1  (you are one of the senders)")
     print("  [0] Back")
-    sub = _safe_menu("  Choose: ", {"1","2","3","0"})
+    sub = prompt_menu_choice("  Choose: ", {"1","2","3","0"})
     if sub == "0":
         return
 
@@ -763,43 +701,45 @@ def _cust_transfer(conn, acc_num: int, logs: Logs) -> None:
     )
 
     if sub == "1":
-        receiver   = _safe_positive_int("  Receiver account number: ")
-        amount     = _safe_amount_minor("  Amount (major units): ")
+        receiver   = prompt_positive_int("  Receiver account number: ")
+        amount     = prompt_amount_minor("  Amount (major units): ")
         via_credit = _ask_via_credit(row)
-        cat        = _safe_category()
-        print(f"  {transfer(conn, logs.tx, acc_num, receiver, amount, cat, via_credit)}")
+        cat        = prompt_category()
+        print(f"  {transfer(conn, logs.tx, acc_num, receiver, amount, cat, via_credit, pending_conn=logs.pending)}")
 
     elif sub == "2":
-        n          = _safe_positive_int("  Number of receivers: ")
-        receivers  = [_safe_positive_int(f"  Receiver {i} account number: ")
+        n          = prompt_positive_int("  Number of receivers: ")
+        receivers  = [prompt_positive_int(f"  Receiver {i} account number: ")
                       for i in range(1, n + 1)]
-        amount     = _safe_amount_minor("  Amount per receiver (major units): ")
+        amount     = prompt_amount_minor("  Amount per receiver (major units): ")
         via_credit = _ask_via_credit(row)
-        cat        = _safe_category()
+        cat        = prompt_category()
         for r in transfer_1tomany(conn, logs.tx, acc_num, receivers,
-                                   amount, cat, via_credit):
+                                   amount, cat, via_credit,
+                                   pending_conn=logs.pending):
             print(f"  {r}")
 
     elif sub == "3":
         print(f"  You (Acc {acc_num}) are one of the senders.")
-        n       = _safe_positive_int("  How many total senders (including you)? ")
+        n       = prompt_positive_int("  How many total senders (including you)? ")
         senders = [acc_num] + [
-            _safe_positive_int(f"  Sender {i} account number: ")
+            prompt_positive_int(f"  Sender {i} account number: ")
             for i in range(2, n + 1)
         ]
-        receiver   = _safe_positive_int("  Receiver account number: ")
-        amount     = _safe_amount_minor("  Amount per sender (major units): ")
+        receiver   = prompt_positive_int("  Receiver account number: ")
+        amount     = prompt_amount_minor("  Amount per sender (major units): ")
         via_credit = _ask_via_credit(row)
-        cat        = _safe_category()
+        cat        = prompt_category()
         for r in transfer_manyto1(conn, logs.tx, senders, receiver,
-                                   amount, cat, via_credit):
+                                   amount, cat, via_credit,
+                                   pending_conn=logs.pending):
             print(f"  {r}")
 
 
 def _ask_via_credit(row) -> bool:
     """Ask if sender wants to pay via credit card (CC accounts only)."""
     if row["acc_type"] == "credit_card":
-        return _safe_yes_no("  Pay via credit card? [yes/no]: ")
+        return prompt_yes_no("  Pay via credit card? [yes/no]: ")
     return False
 
 
@@ -821,7 +761,7 @@ def _cust_vault(conn, acc_num: int, logs: Logs) -> None:
     print("  [1] Add money to vault")
     print("  [2] Withdraw from vault")
     print("  [0] Back")
-    sub = _safe_menu("  Choose: ", {"1","2","0"})
+    sub = prompt_menu_choice("  Choose: ", {"1","2","0"})
     if sub == "0":
         return
 
@@ -846,11 +786,11 @@ def _cust_vault(conn, acc_num: int, logs: Logs) -> None:
         print("  [1] From account balance")
         if row["acc_type"] == "credit_card":
             print("  [2] From credit card")
-        source      = _safe_menu(
+        source      = prompt_menu_choice(
             "  Source: ",
             {"1","2"} if row["acc_type"] == "credit_card" else {"1"},
         )
-        amount      = _safe_amount_minor("  Amount (major units): ")
+        amount      = prompt_amount_minor("  Amount (major units): ")
         from_credit = (source == "2")
         print(f"  {vault_add(conn, logs.tx, acc_num, amount, vpw, from_credit=from_credit)}")
 
@@ -859,11 +799,11 @@ def _cust_vault(conn, acc_num: int, logs: Logs) -> None:
         print("  [1] To account balance")
         if row["acc_type"] == "credit_card":
             print("  [2] Pay back credit card")
-        dest      = _safe_menu(
+        dest      = prompt_menu_choice(
             "  Destination: ",
             {"1","2"} if row["acc_type"] == "credit_card" else {"1"},
         )
-        amount    = _safe_amount_minor("  Amount (major units): ")
+        amount    = prompt_amount_minor("  Amount (major units): ")
         to_credit = (dest == "2")
         print(f"  {vault_deduct(conn, logs.tx, acc_num, amount, vpw, to_credit_payback=to_credit)}")
 
@@ -891,12 +831,12 @@ def _cust_payback(conn, acc_num: int, logs: Logs) -> None:
     print("  [1] Pay via account balance")
     print("  [2] Pay via instant cash (external payment)")
     print("  [0] Back")
-    sub = _safe_menu("  Choose: ", {"1","2","0"})
+    sub = prompt_menu_choice("  Choose: ", {"1","2","0"})
     if sub == "0":
         return
 
-    amount = _safe_amount_minor("  Payback amount (major units): ")
-    cc_pin = _input("  Credit card PIN: ")
+    amount = prompt_amount_minor("  Payback amount (major units): ")
+    cc_pin = prompt_pin("  Credit card PIN: ")
     print(f"  {payback_credit(conn, logs.tx, acc_num, amount, from_balance=(sub == '1'), cc_pin=cc_pin)}")
 
 
@@ -948,13 +888,14 @@ def main() -> None:
         print("  [2] Customer login")
         print("  [3] Exit")
         _divider()
-        ch = _safe_menu("  Select: ", {"1","2","3"})
+        ch = prompt_menu_choice("  Select: ", {"1","2","3"})
 
         if ch == "3":
             conn.close()
             logs.acc.close()
             logs.tx.close()
             logs.freeze.close()
+            logs.pending.close()
             print("  Goodbye.")
             return
         elif ch == "1":
@@ -964,7 +905,7 @@ def main() -> None:
             else:
                 print("  [!] Invalid admin password.")
         elif ch == "2":
-            acc = _safe_positive_int("  Account number: ")
+            acc = prompt_positive_int("  Account number: ")
             pwd = _input("  Password: ")
             ok, msg = authenticate_customer(conn, acc, pwd)
             print(f"  {msg}")
