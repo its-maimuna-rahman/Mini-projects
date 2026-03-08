@@ -1,6 +1,6 @@
 """
 utils_security.py
-Security helpers for BankOS v2: hashing, lockout, vault auth.
+Security helpers for BankOS: hashing, lockout, vault auth.
 """
 
 from __future__ import annotations

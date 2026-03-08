@@ -72,7 +72,7 @@ Import CSV/XLSX files into DB? [yes/no]:
   Enter filename:
 ```
 
-- Each component goes through the same flow: import existing DB **or** start fresh, then optionally import CSV/XLSX data into it.
+- Each component goes through the same flow: `import existing DB **or** start fresh DB`, then optionally import `CSV/XLSX` data into it.
 - If a file import fails, the program asks to retry (the file counter holds until confirmed or skipped).
 - Duplicates and invalid rows are skipped with a warning.
 - **Setup runs once.** After that, SQLite handles all data; CSV/XLSX files are not synced back — edits must go through the program.

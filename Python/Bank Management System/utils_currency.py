@@ -1,6 +1,6 @@
 """
 utils_currency.py
-Currency conversion and amount formatting for BankOS v2.
+Currency conversion and amount formatting for BankOS.
 
 All internal amounts are stored as integers in the smallest unit
 (paise for BDT, cents for USD).  Human-readable conversion happens

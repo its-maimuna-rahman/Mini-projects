@@ -1,15 +1,6 @@
 """
 account_cls.py
 Core OOP models for BankOS.
-
-Changes from v1:
-  - All balances stored as integers (smallest unit: paise/cents)
-  - Passwords/PINs stored as SHA-256 hashes — plaintext never kept in memory
-  - Account gains: currency, is_frozen, daily_transfer_limit
-  - CreditCard gains: credit_used loaded from DB (not reset to 0 on every load)
-  - Vault gains: hashed password via Lock
-  - Payment_Processor prints use format_money() for currency-aware display
-  - No Payment_Processor logic removed — all v1 transfer modes preserved
 """
 
 from __future__ import annotations

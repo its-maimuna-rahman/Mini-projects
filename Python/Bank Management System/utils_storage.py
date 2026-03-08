@@ -1,5 +1,5 @@
 """
-utils_storage.py  —  BankOS v2
+utils_storage.py  —  BankOS
 SQLite + CSV persistence layer.
 
 first_run_setup() returns:

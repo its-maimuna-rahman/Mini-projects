@@ -1,11 +1,11 @@
 """
-main.py — BankOS v2
+main.py — BankOS
 Single entry point: first-run setup → login screen → Admin portal / Customer portal.
 
 All data lives in SQLite databases. CSV/XLSX import is supported at first-run setup.
 XLSX/CSV export is on-demand only from the Admin portal.
 
-Admin  menu : 9 options
+Admin  menu : 10 options
 Customer menu: 8 options
 """
 
@@ -883,7 +883,7 @@ def main() -> None:
     seed_sample_data(conn)
 
     while True:
-        _divider("BankOS v2 — Login")
+        _divider("BankOS — Login")
         print("  [1] Admin login")
         print("  [2] Customer login")
         print("  [3] Exit")
