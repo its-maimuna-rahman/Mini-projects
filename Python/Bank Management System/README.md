@@ -110,14 +110,6 @@ Import CSV/XLSX files into DB? [yes/no]:
 
 All passwords, PINs, and vault passwords are hashed with `hashlib.sha256` — plaintext never touches disk.
 
-```python
-def hash_password(plaintext: str) -> str:
-    return hashlib.sha256(plaintext.encode()).hexdigest()
-
-def check_password(self, input_pwd: str) -> bool:
-    return self._acc_password_hash == hash_password(input_pwd)
-```
-
 Additional protections:
 - `__str__` never exposes passwords or PINs
 - Vault destruction and all fund transfers require re-authentication every time
@@ -248,7 +240,7 @@ Centralised reusable helpers. Functions prefixed `prompt_` loop until valid inpu
 | 7 | Pending Transfer Approval | List, approve, or reject pending transfers |
 | 8 | Generate PDF Statement | Per account; shows native + converted balance |
 | 9 | Export XLSX / CSV | Subfilters: all, credit card, non-CC, vault, non-vault, USD, BDT |
-| 0 | Logout
+| 0 | Logout | Returns to login screen |
 
 ## 👤 Customer Portal (8 options)
 
